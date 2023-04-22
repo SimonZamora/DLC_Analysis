@@ -1,0 +1,12 @@
+name: DLC_Analysis
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  - pandas
+  - matplotlib
+  - numpy
+  - seaborn
+  - scipy
+  - PyQt5
