@@ -186,7 +186,8 @@ plot_current_trial(data[1])
 
 def slice_trajectory(trial,bodypart,interval):
     traj_sliced = {'x':trial[bodypart]['x'][interval[0]:interval[1]],
-                   'y':trial[bodypart]['y'][interval[0]:interval[1]]}
+                   'y':trial[bodypart]['y'][interval[0]:interval[1]],
+                   'z':trial[bodypart]['z'][interval[0]:interval[1]]}
     return traj_sliced
 def find_reaches(trial,reaching_paw,interval=[-150,50]):
     x = trial[reaching_paw]['x']
@@ -200,7 +201,6 @@ def find_reaches(trial,reaching_paw,interval=[-150,50]):
             trial_cutted[entry]=slice_trajectory(trial,entry,inter)
     trial_cutted["DetectedReach"]=maxi+interval[0]
     return trial_cutted
-
 ##
 cut = find_reaches(data[1],"LeftPaw")
 plot_current_trial(cut)
@@ -230,9 +230,204 @@ y = cut["LeftPaw"]['y']
 
 print(len([elem for elem in y if np.isnan(elem)]))
 ##
+tresh =40
+cut = find_reaches(data[184],"LeftPaw")
+
+reach = cut["LeftPaw"]['x']
+plt.plot(reach,'o-')
+plt.plot(np.diff(reach),'o-')
+no_nans_loc=[] # input without nans
+i= 0
+for elem in reach:
+    if not np.isnan(elem):
+        no_nans_loc.append(i)
+    i+=1
+med = np.nanmedian(reach[1:30])
+next_nearmed = [item for item in reach if abs(item-med)<tresh][0]
+if abs(med-reach[0])>tresh:
+    indx =np.where(abs(np.array(reach)-next_nearmed)<0.00001)[0][0]
+    reach[0:indx]=[np.nan]*(indx+1)
+diff = np.diff(reach)
+indx_jump = np.where(abs(diff)>tresh)[0]
+nb_jump = len(indx_jump)
+flag_unknown_jump = False
+#check if there are jumps that didn't come back
+if nb_jump !=0:
+    noBack_jumps = np.where(np.diff(np.sign(diff[indx_jump]))==0)[0]
+    if len(noBack_jumps)!=0:
+        if indx_jump[noBack_jumps[-1]] >= no_nans_loc[-4]:
+            indx_jump.append(no_nans_loc[-1])
+            noBack_jumps = np.where(np.diff(np.sign(diff[indx_jump])) == 0)[0] #reapeat after excluding end of data
+
+        # ADD COME BACK JUMP, IF IT DIDN'T RETURN DUE TO NANS
+
+        added_stops = []
+
+        for i in range(len(noBack_jumps)):
+            idx = noBack_jumps[i]
+            find_nans = np.where(np.isnan(reach[indx_jump[idx]:indx_jump[idx+1]]))[0]
+            find_nans
+            if len(find_nans)!=0:
+                find_first_jump_nan = np.where(np.diff(find_nans)>1)[0]
+                if len(find_first_jump_nan)==0:
+                    next_nonNan = indx_jump[idx]+ np.where(np.diff(find_nans)>=1)[0][0] + find_nans[0] +1## check why -1
+                else:
+                    next_nonNan = indx_jump[idx] +find_first_jump_nan[0] +find_nans[0] +1
+
+                added_stops.append(next_nonNan)
+            else:
+                print('Warning! jump without return, uknown why... remove it')
+                to_remove = np.where(indx_jump==idx)[0][0]
+                indx_jump = np.delete(indx_jump,to_remove)
+                flag_unknown_jump=True
+    ind_jmp_tmp = np.concatenate((indx_jump,added_stops),dtype=int)
+    indx_jump = np.sort(ind_jmp_tmp)
+
+
+# some_list[start:stop:step]
+ind_start = indx_jump[0::2]
+ind_stop = indx_jump[1::2]
+flag_large_jump = False
+if len(ind_stop)!= 0:
+    # Ignore jumps too large
+    remove_start = []
+    remove_stop = []
+    for i in range(len(ind_start)):
+        if len(ind_stop)-1<i:
+            remove_start.append(i)
+            print("Uneven number of jump, jump without return here",ind_start[i])
+        else:
+            if ind_stop[i]-ind_start[i]>20:
+                remove_start.append(i)
+                remove_stop.append(i)
+                print("JumpTooLarge! Interval",ind_start[i],'-',ind_stop[i])
+                flag_large_jump = True
+    if len(remove_start)!=0:
+        ind_start = [int(elem) for elem in ind_start if elem not in remove_start]
+        # for elem in remove_start:
+        #     ind_start.remove(elem)
+
+    if len(remove_stop)!=0:
+        ind_stop = [int(elem) for elem in ind_stop if elem not in remove_stop]
+
+        # for elem in remove_stop:
+        #     ind_stop.remove(elem)
+    print("prout")
+
+    #replace jump by nan
+    for i in range(len(ind_stop)):
+        reach[ind_start[i]:ind_stop[i]+1]=[np.nan]*(ind_stop[i]-ind_start[i]+1)
+
+
+
+
+
+print(next_nearmed)
+print(nb_jump)
+print(noBack_jumps)
+print(ind_start)
+print(ind_stop)
+plt.plot(reach)
+##
 #todo add here future exclusion of jump
-def correct_n_interpolate(trial,parts_to_interpolate,factor_of_point=1):
-    dim = ['x','y']
+def remove_DLC_jumps(trial_reach,thresh,paws,dim):
+
+    for paw in paws:
+        reach = trial_reach[paw][dim]
+        #Correct for start / end / all points = nan
+        if np.isnan(reach[0]):
+            reach[0]=next((item for item in reach if not np.isnan(item)),'All elem of reach are nan!'+trial_reach["Name"])
+        if np.isnan(reach[-1]):
+            reach[-1] = next((item for item in reach[::-1] if not np.isnan(item)),'All elem of reach are nan!' + trial_reach["Name"])
+
+        no_nans_loc = []  # input without nans
+        i = 0
+        for elem in reach:
+            if not np.isnan(elem):
+                no_nans_loc.append(i)
+            i += 1
+        med = np.nanmedian(reach[1:30])
+        next_nearmed = [item for item in reach if abs(item - med) < tresh][0]
+        if abs(med - reach[0]) > tresh:
+            indx = np.where(abs(np.array(reach) - next_nearmed) < 0.00001)[0][0]
+            reach[0:indx] = [np.nan] * (indx)
+        diff = np.diff(reach)
+        indx_jump = np.where(abs(diff) > tresh)[0]
+        nb_jump = len(indx_jump)
+        flag_unknown_jump = False
+        # check if there are jumps that didn't come back
+        if nb_jump != 0:
+            noBack_jumps = np.where(np.diff(np.sign(diff[indx_jump])) == 0)[0]
+            if len(noBack_jumps) != 0:
+                if indx_jump[noBack_jumps[-1]] >= no_nans_loc[-4]:
+                    indx_jump.append(no_nans_loc[-1])
+                    noBack_jumps = np.where(np.diff(np.sign(diff[indx_jump])) == 0)[0]  # reapeat after excluding end of data
+
+                # ADD COME BACK JUMP, IF IT DIDN'T RETURN DUE TO NANS
+
+                added_stops = []
+
+                for i in range(len(noBack_jumps)):
+                    idx = noBack_jumps[i]
+                    find_nans = np.where(np.isnan(reach[indx_jump[idx]:indx_jump[idx + 1]]))[0]
+                    find_nans
+                    if len(find_nans) != 0:
+                        find_first_jump_nan = np.where(np.diff(find_nans) > 1)[0]
+                        if len(find_first_jump_nan) == 0:
+                            next_nonNan = indx_jump[idx] + np.where(np.diff(find_nans) >= 1)[0][0] + find_nans[0] + 1  ## check why -1
+                        else:
+                            next_nonNan = indx_jump[idx] + find_first_jump_nan[0] + find_nans[0] + 1
+              #          if abs(reach[indx_jump[idx]] - reach[next_nonNan]) > 25:
+                         added_stops.append(next_nonNan)
+                    else:
+                        print('Warning! jump without return, uknown why... remove it')
+                        to_remove = np.where(indx_jump == idx)[0][0]
+                        indx_jump = np.delete(indx_jump, to_remove)
+                        flag_unknown_jump = True
+                ind_jmp_tmp = np.concatenate((indx_jump, added_stops))
+                indx_jump = np.sort(ind_jmp_tmp)
+
+        # some_list[start:stop:step]
+        ind_start = indx_jump[0::2]
+        ind_stop = indx_jump[1::2]
+        flag_large_jump = False
+        if len(ind_stop) != 0:
+            # Ignore jumps too large
+            remove_start = []
+            remove_stop = []
+            for i in range(len(ind_start)):
+                if len(ind_stop) - 1 < i:
+                    remove_start.append(i)
+                    print("Uneven number of jump, jump without return here", ind_start[i])
+                else:
+                    if ind_stop[i] - ind_start[i] > 20:
+                        remove_start.append(i)
+                        remove_stop.append(i)
+                        print("JumpTooLarge! Interval", ind_start[i], '-', ind_stop[i])
+                        flag_large_jump = True
+            if len(remove_start) != 0:
+                ind_start = [elem for elem in ind_start if elem not in remove_start]
+                # for elem in remove_start:
+                #     ind_start.remove(elem)
+
+            if len(remove_stop) != 0:
+                ind_stop = [elem for elem in ind_stop if elem not in remove_stop]
+
+                # for elem in remove_stop:
+                #     ind_stop.remove(elem)
+
+            # replace jump by nan
+            for i in range(len(ind_stop)):
+                reach[ind_start[i]:ind_stop[i] + 1] = [np.nan] * (ind_stop[i] - ind_start[i] + 1)
+
+        trial_reach[paw][dim+'-NoJumps']=reach
+
+cut = find_reaches(data[133],"LeftPaw")
+remove_DLC_jumps(cut,60,["LeftPaw"],'z')
+##
+plt.plot(cut["LeftPaw"]['x'])
+##
+def correct_n_interpolate(trial,parts_to_interpolate,dim,factor_of_point=1):
     for d in dim:
         for part in parts_to_interpolate:
             values = trial[part][d]
@@ -247,29 +442,57 @@ def correct_n_interpolate(trial,parts_to_interpolate,factor_of_point=1):
             values_new= f(time_new)
 
             trial[part][d+'-interpolated']=values_new
+##
+thresh =60
+cut = find_reaches(data[4],"LeftPaw")
+reach = cut["LeftPaw"]['x']
 
-correct_n_interpolate(cut,["LeftPaw","RightPaw"])
+def remove_DLCjump_interpolate(trial_cutted,thresh,paws):
+    dim = ['x','y','z']
+    for d in dim:
+        remove_DLC_jumps(trial_cutted,thresh, paws, d)
+
+    dim_to_int = ['x-NoJumps','y-NoJumps','z-NoJumps']
+
+
+    correct_n_interpolate(trial_cutted, paws, dim_to_int)
+
+
+##
+cut = find_reaches(data[2],"LeftPaw")
+remove_DLCjump_interpolate(cut,60,["LeftPaw","RightPaw"])
+plt.plot(cut["LeftPaw"]['x'],'black')
+plt.plot(cut["LeftPaw"]['x-NoJumps'],'-o')
+plt.plot(cut["LeftPaw"]['x-NoJumps-interpolated'],'-x')
+
+##
 
 def return_vel_during_reach(trial,parts_to_vel):
-    dim = ['x','y']
+    dim = ['x','y','z']
     for d in dim:
         for part in parts_to_vel:
-            trial[part][d+'-vel']= savgol_filter(trial[part][d+'-interpolated'],11,3,1)
+            trial[part][d+'-vel']= savgol_filter(trial[part][d+'-NoJumps-interpolated'],11,3,1)
 
 return_vel_during_reach(cut,["LeftPaw","RightPaw"])
 
 ##
 def find_movement_initiation(trial,reaching_paw):
-    maxi_vel = np.nanargmin(trial[reaching_paw]['x-vel'])
-    span_to_see = trial[reaching_paw]['x-interpolated'][:maxi_vel]
-
+    maxi_vel = np.nanargmin(trial[reaching_paw]['x-vel'][30:])
+    span_to_see = trial[reaching_paw]['x-NoJumps-interpolated'][:maxi_vel]
     mean_before_init = np.mean(span_to_see)
     std_before_init = np.std(span_to_see)
 
-    init = next(x for x in span_to_see if x > mean_before_init+std_before_init/2)
-    trial["MovementInit"]=np.where(span_to_see==init)[0][0]
+    init = next((x for x in span_to_see if x > mean_before_init+std_before_init/4), -100)
+    if init != -100:
+        trial["MovementInit"]=np.where(span_to_see==init)[0][0]
+    else:
+        trial["MovementInit"]= maxi_vel
 
 
+cut = find_reaches(data[169],"LeftPaw")
+remove_DLCjump_interpolate(cut, 40, ["LeftPaw", "RightPaw"])
+
+return_vel_during_reach(cut, ["LeftPaw", "RightPaw"])
 
 find_movement_initiation(cut,'LeftPaw')
 ##
@@ -289,7 +512,7 @@ def plot_position_reach(trial,reaching_paw,figure,position_in_grid,axis):
     ax = figure.add_subplot(position_in_grid)
     lin = np.linspace(1, len(trial["RightPaw"][axis]), len(trial["RightPaw"][axis]))
 
-    maxi_pos = np.nanargmin(trial[reaching_paw]['x-interpolated'])
+    maxi_pos = np.nanargmin(trial[reaching_paw]['x-NoJumps-interpolated'])
     maxi_vel = np.nanargmin(trial[reaching_paw]['x-vel'])
     mvmt_initiation = trial['MovementInit']
 
@@ -335,10 +558,10 @@ def plot_reach_in_trial(reach_in_trial,reaching_paw,bodyparts=['Nose', 'Tongue',
     ax1.set_ylabel("y")
 
     # Plot traces of paws x
-    plot_position_reach(reach_in_trial,reaching_paw,fig,grid[0,1],'x-interpolated')
+    plot_position_reach(reach_in_trial,reaching_paw,fig,grid[0,1],'x-NoJumps-interpolated')
 
     # Plot traces of paws y
-    plot_position_reach(reach_in_trial, reaching_paw,fig, grid[1,1], 'y-interpolated')
+    plot_position_reach(reach_in_trial, reaching_paw,fig, grid[1,1], 'y-NoJumps-interpolated')
 
     # Plot velocity of reaching paw
     plot_vel_reach(reach_in_trial,reaching_paw, fig, grid[0,2], 'x-vel')
@@ -355,11 +578,50 @@ for i in range(2,12):
     print(i)
     cut = find_reaches(data[i],"LeftPaw")
     plot_current_trial(data[i])
-    correct_n_interpolate(cut,["LeftPaw","RightPaw"])
+    remove_DLCjump_interpolate(cut,60, ["LeftPaw", "RightPaw"])
     return_vel_during_reach(cut,["LeftPaw","RightPaw"])
     find_movement_initiation(cut,'LeftPaw')
     plot_reach_in_trial(cut,'LeftPaw')
 
+##
+ax = plt.figure().add_subplot(projection='3d')
+j=0
+for elem in data[:]:
+
+
+    cut = find_reaches(elem,"LeftPaw")
+    good_trace = True
+    for entry in cut["LeftPaw"]:
+        if len([point for point in cut["LeftPaw"][entry] if not np.isnan(point)]) < len(cut["LeftPaw"][entry])*9/10:
+            good_trace = False
+        if len(cut["LeftPaw"][entry])==0:
+            good_trace = False
+    for entry in cut["RightPaw"]:
+        if len([point for point in cut["RightPaw"][entry] if not np.isnan(point)]) < len(cut["RightPaw"][entry])*9/10:
+            good_trace = False
+        if len(cut["RightPaw"][entry])==0:
+            good_trace = False
+
+    if good_trace:
+        print("prout")
+        print(j)
+
+        remove_DLCjump_interpolate(cut, 50, ["LeftPaw"])
+        maxi_pos = np.nanargmin(cut["LeftPaw"]['x-NoJumps-interpolated'])
+        return_vel_during_reach(cut, ["LeftPaw"])
+
+        find_movement_initiation(cut, "LeftPaw")
+        mvmt_initiation = cut['MovementInit']
+        x = cut["LeftPaw"]['x-NoJumps-interpolated'][mvmt_initiation:maxi_pos]
+        y = cut["LeftPaw"]['y-NoJumps-interpolated'][mvmt_initiation:maxi_pos]
+        z = cut["LeftPaw"]['z-NoJumps-interpolated'][mvmt_initiation:maxi_pos]
+        ax.plot(x,z,y)
+    j +=1
+##
+cut = find_reaches(data[132],"LeftPaw")
+remove_DLCjump_interpolate(cut, 60, ["LeftPaw", "RightPaw"])
+
+#remove_DLCjump_interpolate(cut, 60, ["LeftPaw", "RightPaw"])
 ##
 fig, ax= plt.subplots(1,2)
 
